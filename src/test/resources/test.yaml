@@ -1,0 +1,11 @@
+number: 123
+str: abc
+
+section:
+  number: 456
+  str: def
+
+#section comment
+commented-section:
+  #value comment
+  value: test
