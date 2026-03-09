@@ -9,3 +9,6 @@ section:
 commented-section:
   #value comment
   value: test
+
+map:
+  2: '321'

@@ -11,6 +11,7 @@ import org.junit.jupiter.api.Test;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -40,8 +41,8 @@ class YamlTest {
 		LOADER.save(path, config);
 
 		assertEquals(
-				"number: 0\nstr: str\nsection:\n  number: 1\n  str: str2\n#section comment\ncommented-section:\n  #value comment\n  value: v\n",
-				Files.readString(path)
+			"number: 0\nstr: str\nsection:\n  number: 1\n  str: str2\n#section comment\ncommented-section:\n  #value comment\n  value: v\n",
+			Files.readString(path)
 		);
 	}
 
@@ -73,6 +74,8 @@ class YamlTest {
 		LOADER.load(config);
 
 		assertEquals("abc", config.str.str);
+		assertEquals(1, config.map.size());
+		assertEquals("321", config.map.get(2).str);
 	}
 
 	@Test
@@ -85,7 +88,7 @@ class YamlTest {
 		final Path path = Path.of("src/test/resources/saved-serializable-test.yaml");
 		LOADER.save(path, config);
 
-		assertEquals("str: '123123123'\n", Files.readString(path));
+		assertEquals("str: '123123123'\nmap:\n  1: '123'\n", Files.readString(path));
 	}
 
 	@ConfigPath(YAML_PATH)
@@ -127,5 +130,7 @@ class YamlTest {
 	@ConfigPath(YAML_PATH)
 	public static class SerializableTestConfig implements Config {
 		public ExampleSerializable str = new ExampleSerializable("123123123");
+
+		public Map<Integer, ExampleSerializable> map = Map.of(1, new ExampleSerializable("123"));
 	}
 }
