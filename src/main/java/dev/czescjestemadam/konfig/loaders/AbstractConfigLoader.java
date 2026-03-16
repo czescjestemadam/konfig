@@ -182,79 +182,61 @@ public abstract class AbstractConfigLoader implements ConfigLoader {
 			} catch (final IllegalAccessException e) {
 				throw new ConfigSaveException("Failed to get field value " + field, e);
 			}
+
 			final Class<?> fieldType = field.getType();
 
 			if (isSectionClass(fieldType)) {
 				final Map<Object, Object> sectionData = saveData(fieldType, fieldValue);
 
 				final String[] comments = getSectionComments(field);
-				final Object value = comments != null ?
-					new ConfigNode(sectionData, comments) :
-					sectionData;
+				final Object value = comments != null
+					? new ConfigNode(sectionData, comments)
+					: sectionData;
 				data.put(key, value);
+
 				continue;
 			}
 
-			if (
-				Map.class.isAssignableFrom(fieldType) &&
-					field.getGenericType() instanceof ParameterizedType paramType
-			) {
-				final Type[] typeArgs = paramType.getActualTypeArguments();
+			if (Map.class.isAssignableFrom(fieldType) && fieldValue instanceof Map<?, ?> valueMap) {
+				final Map<Object, Object> serializedMap = new LinkedHashMap<>();
 
-				if (
-					typeArgs.length == 2 &&
-						typeArgs[0] instanceof Class<?> keyClass &&
-						typeArgs[1] instanceof Class<?> valueClass
-				) {
+				for (final Map.Entry<?, ?> entry : valueMap.entrySet()) {
 					final ValueSerializer<Object> keySerializer = (ValueSerializer<Object>)getMappings()
-						.get(keyClass);
+						.get(entry.getKey().getClass());
 					final ValueSerializer<Object> valueSerializer = (ValueSerializer<Object>)getMappings()
-						.get(valueClass);
+						.get(entry.getValue().getClass());
 
-					if ((keySerializer != null || valueSerializer != null) && fieldValue instanceof Map<?, ?> valueMap) {
-						final Map<Object, Object> serializedMap = new LinkedHashMap<>();
+					final Object serializedKey = keySerializer != null
+						? keySerializer.serialize(entry.getKey())
+						: entry.getKey();
+					final Object serializedValue = valueSerializer != null
+						? valueSerializer.serialize(entry.getValue())
+						: entry.getValue();
 
-						for (final Map.Entry<?, ?> entry : valueMap.entrySet()) {
-							final Object serializedKey = keySerializer != null
-								? keySerializer.serialize(entry.getKey())
-								: entry.getKey();
-							final Object serializedValue = valueSerializer != null
-								? valueSerializer.serialize(entry.getValue())
-								: entry.getValue();
-
-							serializedMap.put(
-								serializedKey,
-								serializedValue
-							);
-						}
-
-						fieldValue = serializedMap;
-					}
+					serializedMap.put(
+						serializedKey,
+						serializedValue
+					);
 				}
+
+				fieldValue = serializedMap;
 			}
 
-			if (
-				Collection.class.isAssignableFrom(fieldType) &&
-					field.getGenericType() instanceof ParameterizedType paramType
-			) {
-				final Type[] typeArgs = paramType.getActualTypeArguments();
-				if (
-					typeArgs.length == 1 &&
-						typeArgs[0] instanceof Class<?> elementClass
-				) {
+			if (Collection.class.isAssignableFrom(fieldType) && fieldValue instanceof Collection<?> valueCollection) {
+				final Collection<Object> serializedCollection = new ArrayList<>();
+
+				for (final Object element : valueCollection) {
 					final ValueSerializer<Object> serializer = (ValueSerializer<Object>)getMappings()
-						.get(elementClass);
+						.get(element.getClass());
 
-					if (serializer != null && fieldValue instanceof Collection<?> valueCollection) {
-						final Collection<Object> serializedCollection = new ArrayList<>();
-
-						for (final Object element : valueCollection) {
-							serializedCollection.add(serializer.serialize(element));
-						}
-
-						fieldValue = serializedCollection;
-					}
+					serializedCollection.add(
+						serializer != null
+							? serializer.serialize(element)
+							: element
+					);
 				}
+
+				fieldValue = serializedCollection;
 			}
 
 			if (getMappings().containsKey(fieldType)) {
@@ -265,9 +247,9 @@ public abstract class AbstractConfigLoader implements ConfigLoader {
 			final Comment commentAnnotation = field.getAnnotation(Comment.class);
 			data.put(
 				key,
-				commentAnnotation != null ?
-					new ConfigNode(fieldValue, commentAnnotation.value()) :
-					fieldValue
+				commentAnnotation != null
+					? new ConfigNode(fieldValue, commentAnnotation.value())
+					: fieldValue
 			);
 		}
 
