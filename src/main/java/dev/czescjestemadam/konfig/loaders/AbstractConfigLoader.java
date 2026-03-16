@@ -78,6 +78,10 @@ public abstract class AbstractConfigLoader implements ConfigLoader {
 
 			final Class<?> fieldType = field.getType();
 			if (isSectionClass(fieldType)) {
+				if (!data.containsKey(key)) {
+					continue;
+				}
+
 				if (!(data.get(key) instanceof Map<?, ?> sectionData)) {
 					throw new IllegalStateException("Config data needed for " + fieldType + " is invalid");
 				}
@@ -281,6 +285,10 @@ public abstract class AbstractConfigLoader implements ConfigLoader {
 			}
 
 			final String key = getStaticSectionKey(subclass);
+			if (!data.containsKey(key)) {
+				continue;
+			}
+
 			if (!(data.get(key) instanceof Map<?, ?> sectionData)) {
 				throw new IllegalStateException("Config data needed for " + subclass + " is invalid");
 			}
