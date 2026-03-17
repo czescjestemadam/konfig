@@ -95,6 +95,9 @@ public abstract class AbstractConfigLoader implements ConfigLoader {
 			}
 
 			Object value = data.get(key);
+			if (value == null) {
+				continue;
+			}
 
 			if (
 				Map.class.isAssignableFrom(fieldType) &&
