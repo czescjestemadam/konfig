@@ -4,10 +4,8 @@ import dev.czescjestemadam.konfig.loaders.ConfigNode;
 import org.snakeyaml.engine.v2.api.DumpSettings;
 import org.snakeyaml.engine.v2.comments.CommentLine;
 import org.snakeyaml.engine.v2.comments.CommentType;
-import org.snakeyaml.engine.v2.nodes.MappingNode;
 import org.snakeyaml.engine.v2.nodes.Node;
 import org.snakeyaml.engine.v2.nodes.NodeTuple;
-import org.snakeyaml.engine.v2.nodes.ScalarNode;
 import org.snakeyaml.engine.v2.representer.StandardRepresenter;
 
 import java.util.Arrays;
@@ -17,42 +15,29 @@ import java.util.Optional;
 public class YamlRepresenter extends StandardRepresenter {
 	public YamlRepresenter(DumpSettings dumpSettings) {
 		super(dumpSettings);
-		representers.put(ConfigNode.class, this::representConfigNode);
+		representers.put(ConfigNode.class, data -> representData(((ConfigNode)data).data()));
 	}
 
 	@Override
-	public Node represent(Object obj) {
-		final Node node = super.represent(obj);
-		if (!(node instanceof MappingNode mappingNode) || !(obj instanceof Map<?, ?> data)) {
-			return node;
+	protected NodeTuple representMappingEntry(Map.Entry<?, ?> entry) {
+		if (!(entry.getValue() instanceof ConfigNode configNode)) {
+			return super.representMappingEntry(entry);
 		}
 
-		for (final NodeTuple tuple : mappingNode.getValue()) {
-			final Node keyNode = tuple.getKeyNode();
-			if (!(keyNode instanceof ScalarNode keyScalarNode)) {
-				continue;
-			}
+		final Node keyNode = representData(entry.getKey());
+		final Node valueNode = representData(configNode.data());
 
-			if (!(data.get(keyScalarNode.getValue()) instanceof ConfigNode configNode)) {
-				continue;
-			}
-
-			if (configNode.comments() != null) {
-				keyScalarNode.setBlockComments(Arrays.stream(configNode.comments())
-						.map(comment -> new CommentLine(
-								Optional.empty(),
-								Optional.empty(),
-								comment,
-								CommentType.BLOCK
-						))
-						.toList());
-			}
+		if (configNode.comments() != null) {
+			keyNode.setBlockComments(Arrays.stream(configNode.comments())
+				.map(comment -> new CommentLine(
+					Optional.empty(),
+					Optional.empty(),
+					comment,
+					CommentType.BLOCK
+				))
+				.toList());
 		}
 
-		return node;
-	}
-
-	private Node representConfigNode(Object data) {
-		return represent(((ConfigNode)data).data());
+		return new NodeTuple(keyNode, valueNode);
 	}
 }

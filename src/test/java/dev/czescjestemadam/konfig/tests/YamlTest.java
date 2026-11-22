@@ -65,6 +65,17 @@ class YamlTest {
 
 
 	@Test
+	void saveNestedComments() throws IOException {
+		final Path path = Path.of("src/test/resources/saved-nested-comments.yaml");
+		LOADER.save(path, NestedCommentsConfig.class);
+
+		assertEquals(
+			"#top\ntop: 1\nplain:\n  #inner\n  x: 2\n  deep:\n    #deep\n    y: 3\n",
+			Files.readString(path)
+		);
+	}
+
+	@Test
 	void loadSerializable() {
 		MAPPINGS.with(ExampleSerializable.class, ExampleSerializable.SERIALIZER);
 		assertNotNull(MAPPINGS.get(ExampleSerializable.class));
@@ -124,6 +135,21 @@ class YamlTest {
 		public static class CommentedSection implements Config {
 			@Comment("value comment")
 			public static String value;
+		}
+	}
+
+	public static class NestedCommentsConfig implements Config {
+		@Comment("top")
+		public static int top = 1;
+
+		public static class Plain implements Config {
+			@Comment("inner")
+			public static int x = 2;
+
+			public static class Deep implements Config {
+				@Comment("deep")
+				public static int y = 3;
+			}
 		}
 	}
 
