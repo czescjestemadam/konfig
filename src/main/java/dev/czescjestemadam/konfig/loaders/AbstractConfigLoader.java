@@ -284,7 +284,10 @@ public abstract class AbstractConfigLoader implements ConfigLoader {
 	}
 
 	private void saveStaticData(Class<?> configClass, Map<Object, Object> data) {
-		for (final Class<?> subclass : configClass.getClasses()) {
+		final Class<?>[] subclasses = configClass.getClasses();
+		Arrays.sort(subclasses, Comparator.comparing(AbstractConfigLoader::getStaticSectionKey));
+
+		for (final Class<?> subclass : subclasses) {
 			if (!isSectionClass(subclass)) {
 				continue;
 			}

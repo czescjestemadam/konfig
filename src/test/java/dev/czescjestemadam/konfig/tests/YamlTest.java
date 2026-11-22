@@ -15,6 +15,7 @@ import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class YamlTest {
 	private static final String YAML_PATH = "src/test/resources/test.yaml";
@@ -58,9 +59,12 @@ class YamlTest {
 	}
 
 	@Test
-	void yamlSaveStatic() {
+	void yamlSaveStatic() throws IOException {
 		final Path path = Path.of("src/test/resources/saved-static.yaml");
 		LOADER.save(path, StaticTestConfig.class);
+
+		final String saved = Files.readString(path);
+		assertTrue(saved.indexOf("\ncommented-section:") < saved.indexOf("\nsection:"));
 	}
 
 
