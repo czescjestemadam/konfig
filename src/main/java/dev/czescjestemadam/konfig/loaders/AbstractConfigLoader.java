@@ -10,9 +10,9 @@ import dev.czescjestemadam.konfig.serializer.SerializerMappings;
 import dev.czescjestemadam.konfig.serializer.ValueSerializer;
 import dev.czescjestemadam.konfig.utils.Str;
 
-import java.lang.reflect.Field;
-import java.lang.reflect.ParameterizedType;
-import java.lang.reflect.Type;
+import java.lang.reflect.*;
+import java.math.BigDecimal;
+import java.math.BigInteger;
 import java.nio.file.Path;
 import java.util.*;
 
@@ -71,100 +71,43 @@ public abstract class AbstractConfigLoader implements ConfigLoader {
 
 	protected abstract void save(Path path, Class<? extends Config> configClass, Config config);
 
-	@SuppressWarnings("unchecked")
 	protected void loadData(Class<?> configClass, Object config, Map<?, ?> data) {
 		for (final Field field : configClass.getFields()) {
 			final String key = getKey(field);
-
-			final Class<?> fieldType = field.getType();
-			if (isSectionClass(fieldType)) {
-				if (!data.containsKey(key)) {
-					continue;
-				}
-
-				if (!(data.get(key) instanceof Map<?, ?> sectionData)) {
-					throw new IllegalStateException("Config data needed for " + fieldType + " is invalid");
-				}
-
-				try {
-					loadData(fieldType, field.get(config), sectionData);
-				} catch (final IllegalAccessException e) {
-					throw new ConfigLoadException("Failed to get section object " + field, e);
-				}
-				continue;
-			}
-
 			if (!data.containsKey(key)) {
 				continue;
 			}
 
-			Object value = data.get(key);
+			final Object rawValue = data.get(key);
+			final Class<?> fieldType = field.getType();
 
-			if (
-				Map.class.isAssignableFrom(fieldType) &&
-					field.getGenericType() instanceof ParameterizedType paramType
-			) {
-				final Type[] typeArgs = paramType.getActualTypeArguments();
-				if (
-					typeArgs.length == 2 &&
-						typeArgs[0] instanceof Class<?> keyClass &&
-						typeArgs[1] instanceof Class<?> valueClass
-				) {
-					final ValueSerializer<?> keySerializer = getMappings().get(keyClass);
-					final ValueSerializer<?> valueSerializer = getMappings().get(valueClass);
-
-					if ((keySerializer != null || valueSerializer != null) && value instanceof Map<?, ?> valueMap) {
-						final Map<Object, Object> deserializedMap = new LinkedHashMap<>();
-
-						for (final Map.Entry<?, ?> entry : valueMap.entrySet()) {
-							final Object deserializedKey = keySerializer != null
-								? keySerializer.deserialize(entry.getKey())
-								: entry.getKey();
-							final Object deserializedValue = valueSerializer != null
-								? valueSerializer.deserialize(entry.getValue())
-								: entry.getValue();
-
-							deserializedMap.put(deserializedKey, deserializedValue);
-						}
-
-						value = deserializedMap;
-					}
+			if (isSectionClass(fieldType)) {
+				if (rawValue == null) {
+					continue;
 				}
+
+				if (!(rawValue instanceof Map<?, ?> sectionData)) {
+					throw new ConfigLoadException("Config data needed for " + fieldType + " is invalid");
+				}
+
+				loadData(fieldType, getOrCreateSection(field, config), sectionData);
+				continue;
 			}
 
-			if (
-				Collection.class.isAssignableFrom(fieldType) &&
-					field.getGenericType() instanceof ParameterizedType paramType
-			) {
-				final Type[] typeArgs = paramType.getActualTypeArguments();
-				if (
-					typeArgs.length == 1 &&
-						typeArgs[0] instanceof Class<?> elementClass
-				) {
-					final ValueSerializer<Object> serializer = (ValueSerializer<Object>)getMappings()
-						.get(elementClass);
-
-					if (serializer != null && value instanceof Collection<?> valueCollection) {
-						final Collection<Object> deserializedCollection = fieldType == List.class
-							? new ArrayList<>()
-							: new LinkedHashSet<>();
-
-						for (final Object element : valueCollection) {
-							deserializedCollection.add(serializer.deserialize(element));
-						}
-
-						value = deserializedCollection;
-					}
-				}
+			final Object value;
+			try {
+				value = deserializeValue(field.getGenericType(), rawValue);
+			} catch (final RuntimeException e) {
+				throw new ConfigLoadException("Failed to deserialize value for field " + field, e);
 			}
 
-			if (getMappings().containsKey(fieldType)) {
-				value = getMappings().get(fieldType).deserialize(value);
+			if (value == null && fieldType.isPrimitive()) {
+				continue;
 			}
 
 			try {
 				field.set(config, value);
-			} catch (final IllegalAccessException e) {
+			} catch (final IllegalAccessException | IllegalArgumentException e) {
 				throw new ConfigLoadException("Failed to load config value into field " + field, e);
 			}
 		}
@@ -174,13 +117,12 @@ public abstract class AbstractConfigLoader implements ConfigLoader {
 		}
 	}
 
-	@SuppressWarnings("unchecked")
 	protected Map<Object, Object> saveData(Class<?> configClass, Object config) {
 		final Map<Object, Object> data = new LinkedHashMap<>();
 
 		for (final Field field : configClass.getFields()) {
 			final String key = getKey(field);
-			Object fieldValue;
+			final Object fieldValue;
 			try {
 				fieldValue = field.get(config);
 			} catch (final IllegalAccessException e) {
@@ -190,70 +132,28 @@ public abstract class AbstractConfigLoader implements ConfigLoader {
 			final Class<?> fieldType = field.getType();
 
 			if (isSectionClass(fieldType)) {
-				final Map<Object, Object> sectionData = saveData(fieldType, fieldValue);
+				final Object sectionData = fieldValue != null
+					? saveData(fieldType, fieldValue)
+					: null;
 
 				final String[] comments = getSectionComments(field);
-				final Object value = comments != null
-					? new ConfigNode(sectionData, comments)
-					: sectionData;
-				data.put(key, value);
-
+				data.put(key, comments != null ? new ConfigNode(sectionData, comments) : sectionData);
 				continue;
 			}
 
-			if (Map.class.isAssignableFrom(fieldType) && fieldValue instanceof Map<?, ?> valueMap) {
-				final Map<Object, Object> serializedMap = new LinkedHashMap<>();
-
-				for (final Map.Entry<?, ?> entry : valueMap.entrySet()) {
-					final ValueSerializer<Object> keySerializer = (ValueSerializer<Object>)getMappings()
-						.get(entry.getKey().getClass());
-					final ValueSerializer<Object> valueSerializer = (ValueSerializer<Object>)getMappings()
-						.get(entry.getValue().getClass());
-
-					final Object serializedKey = keySerializer != null
-						? keySerializer.serialize(entry.getKey())
-						: entry.getKey();
-					final Object serializedValue = valueSerializer != null
-						? valueSerializer.serialize(entry.getValue())
-						: entry.getValue();
-
-					serializedMap.put(
-						serializedKey,
-						serializedValue
-					);
-				}
-
-				fieldValue = serializedMap;
-			}
-
-			if (Collection.class.isAssignableFrom(fieldType) && fieldValue instanceof Collection<?> valueCollection) {
-				final Collection<Object> serializedCollection = new ArrayList<>();
-
-				for (final Object element : valueCollection) {
-					final ValueSerializer<Object> serializer = (ValueSerializer<Object>)getMappings()
-						.get(element.getClass());
-
-					serializedCollection.add(
-						serializer != null
-							? serializer.serialize(element)
-							: element
-					);
-				}
-
-				fieldValue = serializedCollection;
-			}
-
-			if (getMappings().containsKey(fieldType)) {
-				final ValueSerializer<Object> serializer = (ValueSerializer<Object>)getMappings().get(fieldType);
-				fieldValue = serializer.serialize(fieldValue);
+			final Object value;
+			try {
+				value = serializeValue(field.getGenericType(), fieldValue);
+			} catch (final RuntimeException e) {
+				throw new ConfigSaveException("Failed to serialize value of field " + field, e);
 			}
 
 			final Comment commentAnnotation = field.getAnnotation(Comment.class);
 			data.put(
 				key,
 				commentAnnotation != null
-					? new ConfigNode(fieldValue, commentAnnotation.value())
-					: fieldValue
+					? new ConfigNode(value, commentAnnotation.value())
+					: value
 			);
 		}
 
@@ -264,6 +164,214 @@ public abstract class AbstractConfigLoader implements ConfigLoader {
 		return data;
 	}
 
+	protected Object deserializeValue(Type type, Object value) {
+		if (value == null) {
+			return null;
+		}
+
+		final Class<?> rawType = getRawType(type);
+
+		final ValueSerializer<?> serializer = findSerializer(type, rawType);
+		if (serializer != null) {
+			return serializer.deserialize(value);
+		}
+
+		if (Map.class.isAssignableFrom(rawType) && value instanceof Map<?, ?> valueMap) {
+			final Type keyType = getTypeArgument(type, 0, 2);
+			final Type valueType = getTypeArgument(type, 1, 2);
+
+			final Map<Object, Object> map = createMap(rawType);
+			for (final Map.Entry<?, ?> entry : valueMap.entrySet()) {
+				map.put(
+					deserializeValue(keyType, entry.getKey()),
+					deserializeValue(valueType, entry.getValue())
+				);
+			}
+			return map;
+		}
+
+		if (Collection.class.isAssignableFrom(rawType) && value instanceof Collection<?> valueCollection) {
+			final Type elementType = getTypeArgument(type, 0, 1);
+
+			final Collection<Object> collection = createCollection(rawType);
+			for (final Object element : valueCollection) {
+				collection.add(deserializeValue(elementType, element));
+			}
+			return collection;
+		}
+
+		if (value instanceof Number number) {
+			final Object converted = convertNumber(rawType, number);
+			if (converted != null) {
+				return converted;
+			}
+		}
+
+		return value;
+	}
+
+	@SuppressWarnings("unchecked")
+	protected Object serializeValue(Type type, Object value) {
+		if (value == null) {
+			return null;
+		}
+
+		ValueSerializer<Object> serializer = (ValueSerializer<Object>)findSerializer(type, getRawType(type));
+		if (serializer == null) {
+			serializer = (ValueSerializer<Object>)getMappings().get(value.getClass());
+		}
+		if (serializer != null) {
+			return serializer.serialize(value);
+		}
+
+		if (value instanceof Map<?, ?> valueMap) {
+			final Type keyType = getTypeArgument(type, 0, 2);
+			final Type valueType = getTypeArgument(type, 1, 2);
+
+			final Map<Object, Object> map = new LinkedHashMap<>();
+			for (final Map.Entry<?, ?> entry : valueMap.entrySet()) {
+				map.put(
+					serializeValue(keyType, entry.getKey()),
+					serializeValue(valueType, entry.getValue())
+				);
+			}
+			return map;
+		}
+
+		if (value instanceof Collection<?> valueCollection) {
+			final Type elementType = getTypeArgument(type, 0, 1);
+
+			final List<Object> list = new ArrayList<>();
+			for (final Object element : valueCollection) {
+				list.add(serializeValue(elementType, element));
+			}
+			return list;
+		}
+
+		return value;
+	}
+
+	private ValueSerializer<?> findSerializer(Type type, Class<?> rawType) {
+		final ValueSerializer<?> serializer = getMappings().get(type);
+		return serializer != null ? serializer : getMappings().get(rawType);
+	}
+
+	private static Class<?> getRawType(Type type) {
+		if (type instanceof Class<?> cls) {
+			return cls;
+		}
+		if (type instanceof ParameterizedType paramType && paramType.getRawType() instanceof Class<?> cls) {
+			return cls;
+		}
+		if (type instanceof WildcardType wildcardType) {
+			final Type[] upperBounds = wildcardType.getUpperBounds();
+			return upperBounds.length > 0 ? getRawType(upperBounds[0]) : Object.class;
+		}
+		if (type instanceof TypeVariable<?> typeVariable) {
+			final Type[] bounds = typeVariable.getBounds();
+			return bounds.length > 0 ? getRawType(bounds[0]) : Object.class;
+		}
+		if (type instanceof GenericArrayType) {
+			return Object[].class;
+		}
+		return Object.class;
+	}
+
+	private static Type getTypeArgument(Type type, int index, int expectedCount) {
+		if (type instanceof ParameterizedType paramType) {
+			final Type[] typeArgs = paramType.getActualTypeArguments();
+			if (typeArgs.length == expectedCount) {
+				return typeArgs[index];
+			}
+		}
+		return Object.class;
+	}
+
+	@SuppressWarnings("unchecked")
+	private static Map<Object, Object> createMap(Class<?> rawType) {
+		if (!rawType.isInterface() && !Modifier.isAbstract(rawType.getModifiers())) {
+			final Object instance = tryInstantiate(rawType);
+			if (instance != null) {
+				return (Map<Object, Object>)instance;
+			}
+		}
+		if (SortedMap.class.isAssignableFrom(rawType)) {
+			return new TreeMap<>();
+		}
+		return new LinkedHashMap<>();
+	}
+
+	@SuppressWarnings("unchecked")
+	private static Collection<Object> createCollection(Class<?> rawType) {
+		if (!rawType.isInterface() && !Modifier.isAbstract(rawType.getModifiers())) {
+			final Object instance = tryInstantiate(rawType);
+			if (instance != null) {
+				return (Collection<Object>)instance;
+			}
+		}
+		if (SortedSet.class.isAssignableFrom(rawType)) {
+			return new TreeSet<>();
+		}
+		if (Set.class.isAssignableFrom(rawType)) {
+			return new LinkedHashSet<>();
+		}
+		if (Queue.class.isAssignableFrom(rawType)) {
+			return new ArrayDeque<>();
+		}
+		return new ArrayList<>();
+	}
+
+	private static Object tryInstantiate(Class<?> cls) {
+		try {
+			return cls.getConstructor().newInstance();
+		} catch (final ReflectiveOperationException e) {
+			return null;
+		}
+	}
+
+	private static Object convertNumber(Class<?> type, Number number) {
+		if (type == int.class || type == Integer.class) {
+			return number.intValue();
+		}
+		if (type == long.class || type == Long.class) {
+			return number.longValue();
+		}
+		if (type == double.class || type == Double.class) {
+			return number.doubleValue();
+		}
+		if (type == float.class || type == Float.class) {
+			return number.floatValue();
+		}
+		if (type == short.class || type == Short.class) {
+			return number.shortValue();
+		}
+		if (type == byte.class || type == Byte.class) {
+			return number.byteValue();
+		}
+		if (type == BigInteger.class) {
+			return number instanceof BigInteger bigInteger ? bigInteger : BigInteger.valueOf(number.longValue());
+		}
+		if (type == BigDecimal.class) {
+			return number instanceof BigDecimal bigDecimal ? bigDecimal : new BigDecimal(number.toString());
+		}
+		return null;
+	}
+
+	private static Object getOrCreateSection(Field field, Object config) {
+		try {
+			final Object section = field.get(config);
+			if (section != null) {
+				return section;
+			}
+
+			final Object created = field.getType().getConstructor().newInstance();
+			field.set(config, created);
+			return created;
+		} catch (final ReflectiveOperationException e) {
+			throw new ConfigLoadException("Failed to get or create section object " + field, e);
+		}
+	}
+
 	private void loadStaticData(Class<?> configClass, Map<?, ?> data) {
 		for (final Class<?> subclass : configClass.getClasses()) {
 			if (!isSectionClass(subclass)) {
@@ -271,12 +379,13 @@ public abstract class AbstractConfigLoader implements ConfigLoader {
 			}
 
 			final String key = getStaticSectionKey(subclass);
-			if (!data.containsKey(key)) {
+			final Object rawSectionData = data.get(key);
+			if (rawSectionData == null) {
 				continue;
 			}
 
-			if (!(data.get(key) instanceof Map<?, ?> sectionData)) {
-				throw new IllegalStateException("Config data needed for " + subclass + " is invalid");
+			if (!(rawSectionData instanceof Map<?, ?> sectionData)) {
+				throw new ConfigLoadException("Config data needed for " + subclass + " is invalid");
 			}
 
 			loadData(subclass, null, sectionData);
